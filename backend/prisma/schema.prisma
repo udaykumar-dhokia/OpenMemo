@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String  @id @default(uuid()) @db.Uuid
+  email          String  @unique
+  firstName      String  @default("")
+  lastName       String?
+  password       String
+  username       String?
+  publicKey      String
+  privateKey     String
+  privateKeyIv   String
+  privateKeyTag  String
+  encryptionSalt String
+  plan           String  @default("free")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memories Memory[]
+
+  @@index([email])
+}
+
+model Memory {
+  id       String  @id @default(uuid()) @db.Uuid
+  userId   String  @db.Uuid
+  title    String?
+  content  String
+  summary  String
+  vectorId String
+
+  format          String @default("markdown")
+  importanceScore Float  @default(0.5)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id])
+  memoryTags MemoryTag[]
+
+  @@index([userId])
+}
+
+model MemoryTag {
+  id       String @id @default(uuid()) @db.Uuid
+  memoryId String @db.Uuid
+  tag      String
+
+  memory Memory @relation(fields: [memoryId], references: [id])
+
+  @@index([memoryId])
+}
