@@ -24,7 +24,9 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memories Memory[]
+  memories        Memory[]
+  apiKeys         ApiKey[]
+  archivedApiKeys ArchivedApiKey[]
 
   @@index([email])
 }
@@ -57,4 +59,33 @@ model MemoryTag {
   memory Memory @relation(fields: [memoryId], references: [id])
 
   @@index([memoryId])
+}
+
+model ApiKey {
+  id     String  @id @default(uuid()) @db.Uuid
+  name   String?
+  key    String  @unique
+  userId String  @db.Uuid
+  prefix String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model ArchivedApiKey {
+  id     String  @id @default(uuid()) @db.Uuid
+  name   String?
+  userId String  @db.Uuid
+  key    String  @unique
+  prefix String
+
+  archivedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
