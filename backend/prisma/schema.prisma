@@ -39,6 +39,12 @@ model Memory {
   summary  String
   vectorId String
 
+  contentIv      String?
+  contentTag     String?
+  summaryIv      String?
+  summaryTag     String?
+  encryptionKey  String?
+
   format          String @default("markdown")
   importanceScore Float  @default(0.5)
 
