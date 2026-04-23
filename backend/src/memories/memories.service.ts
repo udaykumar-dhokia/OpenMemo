@@ -1,12 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { CreateMemoryDto } from './dto/create-memory.dto.js';
-import { MemoryCategory } from '../../generated/prisma/client.js';
+import { MemoryCategory, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
+import { GeminiService } from '../common/services/gemini.service.js';
+import { splitText } from '../common/utils/text-splitter.js';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { CreateMemoryDto } from './dto/create-memory.dto.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 
 @Injectable()
 export class MemoriesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private geminiService: GeminiService,
+  ) {}
 
   private encryptWithKey(
     data: string,
@@ -60,7 +65,41 @@ export class MemoriesService {
     };
   }
 
-  async decryptMemory(memory: any, password?: string) {
+  private async handleEmbeddings(
+    memoryId: string,
+    userId: string,
+    content: string,
+    summary: string,
+    aesKey: Buffer,
+  ) {
+    try {
+      await this.prisma.$executeRaw`
+        DELETE FROM "MemoryEmbedding" WHERE "memoryId" = ${memoryId}::uuid
+      `;
+
+      const chunks = splitText(content, 1000, 100);
+      if (summary && !chunks.includes(summary)) {
+        chunks.push(summary);
+      }
+
+      for (const chunk of chunks) {
+        const embedding = await this.geminiService.generateEmbedding(chunk);
+        const encryptedChunk = this.encryptWithKey(chunk, aesKey);
+        const vectorString = `[${embedding.join(',')}]`;
+
+        await this.prisma.$executeRaw`
+          INSERT INTO "MemoryEmbedding" ("id", "memoryId", "userId", "contentChunk", "chunkIv", "chunkTag", "embedding")
+          VALUES (gen_random_uuid(), ${memoryId}::uuid, ${userId}::uuid, ${encryptedChunk.ciphertext}, ${encryptedChunk.iv}, ${encryptedChunk.authTag}, ${vectorString}::vector)
+        `;
+      }
+    } catch (error) {
+      console.error(
+        `[EMBEDDING] Failed to handle embeddings: ${error.message}`,
+      );
+    }
+  }
+
+  async decryptMemory(memory: any) {
     if (!memory.encryptionKey) return memory;
 
     try {
@@ -73,64 +112,27 @@ export class MemoriesService {
         return memory;
       }
 
-      const tryDecrypt = (keySource: string) => {
-        const masterKey = crypto.scryptSync(keySource, user.encryptionSalt, 32);
-        const decipher = crypto.createDecipheriv(
-          'aes-256-gcm',
-          masterKey,
-          Buffer.from(user.privateKeyIv, 'hex'),
-        );
-        decipher.setAuthTag(Buffer.from(user.privateKeyTag, 'hex'));
-        let decrypted = decipher.update(user.privateKey, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        return decrypted;
-      };
+      const masterKey = crypto.scryptSync(
+        user.password,
+        user.encryptionSalt,
+        32,
+      );
+      const decipher = crypto.createDecipheriv(
+        'aes-256-gcm',
+        masterKey,
+        Buffer.from(user.privateKeyIv, 'hex'),
+      );
+      decipher.setAuthTag(Buffer.from(user.privateKeyTag, 'hex'));
 
       let privateKey: string;
       try {
-        console.log(`[DECRYPT] Attempting decryption with stored hash...`);
-        privateKey = tryDecrypt(user.password);
+        privateKey = decipher.update(user.privateKey, 'hex', 'utf8');
+        privateKey += decipher.final('utf8');
       } catch (e) {
-        console.log(`[DECRYPT] Hash decryption failed: ${e.message}`);
-        if (password) {
-          console.log(
-            `[DECRYPT] Attempting decryption with provided plaintext password...`,
-          );
-          privateKey = tryDecrypt(password);
-
-          try {
-            console.log(
-              `[DECRYPT] Plaintext worked! Migrating private key to hash-based encryption...`,
-            );
-            const { encryptedPrivateKey, iv, authTag } = this.encryptPrivateKey(
-              privateKey,
-              user.password,
-              user.encryptionSalt,
-            );
-            await this.prisma.user.update({
-              where: { id: user.id },
-              data: {
-                privateKey: encryptedPrivateKey,
-                privateKeyIv: iv,
-                privateKeyTag: authTag,
-              },
-            });
-            console.log(
-              `[DECRYPT] Successfully migrated user ${user.id} to hash-based encryption.`,
-            );
-          } catch (migrationError) {
-            console.error(
-              `[DECRYPT] Migration failed: ${migrationError.message}`,
-            );
-          }
-        } else {
-          throw new Error(
-            'Decryption failed with hash and no plaintext password provided',
-          );
-        }
+        throw new Error(`Failed to decrypt private key with stored hash: ${e.message}`);
       }
 
-      console.log(`[DECRYPT] Private key decrypted successfully`);
+      console.log(`[DECRYPT] Private key decrypted successfully using hash`);
       const aesKey = crypto.privateDecrypt(
         {
           key: privateKey,
@@ -160,7 +162,8 @@ export class MemoriesService {
         summary,
       };
     } catch (error) {
-      console.error(`[DECRYPT] Overall decryption failed: ${error.message}`);
+      console.error(`[DECRYPT] Overall decryption failed for memory ${memory.id}: ${error.message}`);
+      console.error(`[DECRYPT] Error Stack: ${error.stack}`);
       return memory;
     }
   }
@@ -224,6 +227,15 @@ export class MemoriesService {
           },
           include: { memoryTags: true },
         });
+
+        this.handleEmbeddings(
+          updated.id,
+          userId,
+          dto.content,
+          dto.summary,
+          aesKey,
+        );
+
         return this.decryptMemory(updated);
       }
     }
@@ -241,10 +253,39 @@ export class MemoriesService {
         memoryTags: true,
       },
     });
+
+    this.handleEmbeddings(created.id, userId, dto.content, dto.summary, aesKey);
+
     return this.decryptMemory(created);
   }
 
-  async findAll(userId: string, query?: string, password?: string) {
+  async findAll(userId: string, query?: string) {
+    if (query && !Object.values(MemoryCategory).includes(query as any)) {
+      try {
+        const queryEmbedding =
+          await this.geminiService.generateEmbedding(query);
+        const vectorString = `[${queryEmbedding.join(',')}]`;
+
+        const results: any[] = await this.prisma.$queryRaw`
+          SELECT m.*, 
+                 1 - (me.embedding <=> ${vectorString}::vector) as similarity
+          FROM "Memory" m
+          JOIN "MemoryEmbedding" me ON m.id = me."memoryId"
+          WHERE m."userId" = ${userId}::uuid
+          ORDER BY similarity DESC
+          LIMIT 10
+        `;
+
+        const uniqueResults = Array.from(
+          new Map(results.map((item) => [item.id, item])).values(),
+        );
+
+        return Promise.all(uniqueResults.map((m) => this.decryptMemory(m)));
+      } catch (error) {
+        console.error(`[SEARCH] Semantic search failed: ${error.message}`);
+      }
+    }
+
     const memories = await this.prisma.memory.findMany({
       where: {
         userId,
@@ -263,14 +304,10 @@ export class MemoriesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (password) {
-      return Promise.all(memories.map((m) => this.decryptMemory(m, password)));
-    }
-
-    return memories;
+    return Promise.all(memories.map((m) => this.decryptMemory(m)));
   }
 
-  async findOne(userId: string, id: string, password?: string) {
+  async findOne(userId: string, id: string) {
     const memory = await this.prisma.memory.findFirst({
       where: { id, userId },
       include: { memoryTags: true },
@@ -280,18 +317,10 @@ export class MemoriesService {
       throw new NotFoundException('Memory not found');
     }
 
-    if (password) {
-      return this.decryptMemory(memory, password);
-    }
-
-    return memory;
+    return this.decryptMemory(memory);
   }
 
-  async findByCategory(
-    userId: string,
-    category: MemoryCategory,
-    password?: string,
-  ) {
+  async findByCategory(userId: string, category: MemoryCategory) {
     const memory = await this.prisma.memory.findFirst({
       where: { userId, category },
       include: { memoryTags: true },
@@ -299,7 +328,7 @@ export class MemoriesService {
 
     if (!memory) return null;
 
-    return this.decryptMemory(memory, password);
+    return this.decryptMemory(memory);
   }
 
   async remove(userId: string, id: string) {

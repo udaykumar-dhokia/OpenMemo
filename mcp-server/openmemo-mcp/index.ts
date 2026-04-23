@@ -40,7 +40,6 @@ const MemoryCategory = z.enum([
  */
 const getHeaders = () => {
   const apiKey = process.env.OPENMEMO_API_KEY;
-  const password = process.env.OPENMEMO_PASSWORD;
   if (!apiKey) {
     throw new Error(
       "OPENMEMO_API_KEY is not configured. \n" +
@@ -49,7 +48,6 @@ const getHeaders = () => {
   }
   return {
     "x-api-key": apiKey,
-    ...(password ? { "x-memory-password": password } : {}),
   };
 };
 
@@ -66,14 +64,13 @@ server.tool(
       title: z.string().optional().describe("Optional title for the memory"),
       tags: z.array(z.string()).optional().describe("Optional tags"),
       summary: z.string().describe("A short summary of the memory"),
-      vectorId: z.string().describe("A unique vector ID for semantic indexing"),
     }),
   },
-  async ({ content, category, title, tags, summary, vectorId }) => {
+  async ({ content, category, title, tags, summary }) => {
     try {
       const response = await axios.post(
         `${BACKEND_URL}/memories`,
-        { content, category, title, tags, summary, vectorId },
+        { content, category, title, tags, summary },
         { headers: getHeaders() },
       );
       return text(`Memory stored successfully! (ID: ${response.data.id})`);
@@ -111,16 +108,6 @@ server.tool(
         return text(`No core memory found for category: ${category}`);
       }
 
-      // Check if the content still looks encrypted (hex string of exactly 100+ chars)
-      const isEncrypted = /^[0-9a-f]{64,}$/i.test(memory.content);
-      if (isEncrypted) {
-        return text(
-          `⚠️ Core Memory [${category}] is still encrypted on the server.\n\n` +
-            `Raw Content: ${memory.content.substring(0, 20)}...\n\n` +
-            `Please ensure your API Key is valid and the backend decryption logic is working.`,
-        );
-      }
-
       return text(
         `### Core Memory: ${category.toUpperCase()}\n\n${memory.content}`,
       );
@@ -154,7 +141,6 @@ server.tool(
           category,
           summary,
           title: `Updated ${category}`,
-          vectorId: `${category}_${Date.now()}`,
         },
         { headers: getHeaders() },
       );
@@ -191,13 +177,12 @@ server.tool(
       });
 
       const results = response.data.map((m: any) => {
-        const isEncrypted = /^[0-9a-f]{64,}$/i.test(m.content);
         return {
           id: m.id,
           category: m.category,
           title: m.title,
-          content: isEncrypted ? "[Encrypted Content]" : m.content,
-          summary: isEncrypted ? "[Encrypted Summary]" : m.summary,
+          content: m.content,
+          summary: m.summary,
         };
       });
 
@@ -225,10 +210,24 @@ server.prompt(
 You are an AI assistant with access to OpenMemo, a secure long-term memory system.
 Follow these rules for managing the user's memory:
 
-1. **Initialization**: At the start of a session, use \`get_core_memory\` to fetch 'identity' and 'preferences'. This establishes the user's persona and interaction style.
-2. **Contextual Awareness**: If the user mentions a new project, relationship, or constraint, use \`update_core_memory\` for the respective category.
-3. **Identity Evolution**: If you learn something significant about the user's expertise or goals, update those core memories.
-4. **Markdown Format**: Always store core memories in clean Markdown format.
+**Available Core Categories**:
+- \`identity\`: Personal background, developer persona, bio.
+- \`preferences\`: UI/UX settings, coding style, tool choices.
+- \`projects\`: Current work, side projects, client engagements.
+- \`expertise\`: Skills, tech stack, domain knowledge.
+- \`ideas\`: Future concepts, brainstorming notes.
+- \`relationships\`: Clients, colleagues, networking info.
+- \`constraints\`: Deadlines, hardware limits, architectural rules.
+- \`goals\`: Career objectives, project milestones.
+
+1. **Initialization**: At the start of a session, use \`search_memories\` to fetch memories related to the user's query.
+2. **Check Before Create**: Before creating a new memory, always use \`search_memories\` or \`get_core_memory\` to check if similar information already exists.
+3. **Update vs. Create**: If information belongs to one of the **Core Categories** above, use \`update_core_memory\` instead of creating a new memory record.
+4. **Semantic Retrieval**: Use \`search_memories\` for general knowledge retrieval outside core categories.
+5. **Contextual Awareness**: Consolidate related information (e.g., multiple projects) into a single Markdown list within the respective core category.
+6. **Markdown Format**: Always store and update memories in clean, structured Markdown format.
+7. **Before Coding**: Always use \`get_core_memory(preferences)\` and \`get_core_memory(identity)\` to get the user's preferences and identity & ask user to continue the coding with user preferences and identity.
+8. **Post-Task Updates**: After completing a significant task (e.g., finishing a feature, resolving a complex bug, or establishing a new workflow), proactively update the relevant core memory category to reflect the updated state of the user's projects, expertise, or constraints.
     `);
   },
 );

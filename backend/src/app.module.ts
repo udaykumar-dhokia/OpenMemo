@@ -6,9 +6,17 @@ import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { ApiKeysModule } from './api-keys/api-keys.module.js';
 import { MemoriesModule } from './memories/memories.module.js';
+import { CommonModule } from './common/common.module.js';
 
 @Module({
-  imports: [PrismaModule, AuthModule, UsersModule, ApiKeysModule, MemoriesModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    ApiKeysModule,
+    MemoriesModule,
+    CommonModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
