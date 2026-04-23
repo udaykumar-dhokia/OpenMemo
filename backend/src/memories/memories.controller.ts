@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
 import { MemoriesService } from './memories.service.js';
 import { CreateMemoryDto } from './dto/create-memory.dto.js';
@@ -31,13 +32,27 @@ export class MemoriesController {
   async findAll(
     @GetUser() user: PrismaClient.User,
     @Query('query') query?: string,
+    @Headers('x-memory-password') password?: string,
   ) {
-    return this.memoriesService.findAll(user.id, query);
+    return this.memoriesService.findAll(user.id, query, password);
   }
 
   @Get(':id')
-  async findOne(@GetUser() user: PrismaClient.User, @Param('id') id: string) {
-    return this.memoriesService.findOne(user.id, id);
+  async findOne(
+    @GetUser() user: PrismaClient.User,
+    @Param('id') id: string,
+    @Headers('x-memory-password') password?: string,
+  ) {
+    return this.memoriesService.findOne(user.id, id, password);
+  }
+
+  @Get('category/:category')
+  async findByCategory(
+    @GetUser() user: PrismaClient.User,
+    @Param('category') category: PrismaClient.MemoryCategory,
+    @Headers('x-memory-password') password?: string,
+  ) {
+    return this.memoriesService.findByCategory(user.id, category, password);
   }
 
   @Delete(':id')

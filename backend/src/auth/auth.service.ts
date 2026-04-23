@@ -56,7 +56,7 @@ export class AuthService {
     const encryptionSalt = crypto.randomBytes(16).toString('hex');
     const { encryptedPrivateKey, iv, authTag } = this.encryptPrivateKey(
       privateKey,
-      data.password,
+      hashedPassword,
       encryptionSalt,
     );
 

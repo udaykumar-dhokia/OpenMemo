@@ -32,18 +32,19 @@ model User {
 }
 
 model Memory {
-  id       String  @id @default(uuid()) @db.Uuid
-  userId   String  @db.Uuid
+  id       String         @id @default(uuid()) @db.Uuid
+  userId   String         @db.Uuid
   title    String?
   content  String
   summary  String
   vectorId String
+  category MemoryCategory @default(preferences)
 
-  contentIv      String?
-  contentTag     String?
-  summaryIv      String?
-  summaryTag     String?
-  encryptionKey  String?
+  contentIv     String?
+  contentTag    String?
+  summaryIv     String?
+  summaryTag    String?
+  encryptionKey String?
 
   format          String @default("markdown")
   importanceScore Float  @default(0.5)
@@ -94,4 +95,15 @@ model ArchivedApiKey {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
+}
+
+enum MemoryCategory {
+  preferences
+  identity
+  projects
+  expertise
+  ideas
+  relationships
+  constraints
+  goals
 }

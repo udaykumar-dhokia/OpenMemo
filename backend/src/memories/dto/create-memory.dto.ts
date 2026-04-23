@@ -1,4 +1,5 @@
-import { IsString, IsOptional, IsNumber, IsArray } from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsArray, IsEnum } from 'class-validator';
+import { MemoryCategory } from '../../../generated/prisma/client.js';
 
 export class CreateMemoryDto {
   @IsString()
@@ -9,10 +10,13 @@ export class CreateMemoryDto {
   content: string;
 
   @IsString()
-  summary: string;
+  summary: string;  
 
   @IsString()
   vectorId: string;
+
+  @IsEnum(MemoryCategory)
+  category: MemoryCategory;
 
   @IsString()
   @IsOptional()
